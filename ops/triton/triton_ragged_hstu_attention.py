@@ -38,9 +38,32 @@ except ImportError:
 def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
     configs = []
     if torch.version.hip:
+        # configs = [
+            # triton.Config({'BLOCK_M': 64, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 16, 'waves_per_eu': 2}, num_stages=1, num_warps=4),]
+
+        # configs = [
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=4),
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
+
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-False
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-True
+
+        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=4),
+        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
+        # ]
+        configs = []
         for BLOCK_M in [32, 64]:
             for BLOCK_N in [32, 64]:
-                for num_stages in [0]:
+                for num_stages in [1]:
                     for num_warps in [4, 8]:
                         for matrix_instr_nonkdim in [16, 32]:
                             for waves_per_eu in [0, 2]:
@@ -239,11 +262,18 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     ALLOW_TF32: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    BOUNDARY_CHECK: tl.constexpr,
 ):
     start_n = tl.multiple_of(start_n, BLOCK_N)
     mask_n = offs_n < seq_len - start_n
     # -- compute qk ----
-    k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
+    if BOUNDARY_CHECK:
+        k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
+        v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
+    else:
+        k = tl.load(K_block_ptr)
+        v = tl.load(V_block_ptr)
+
     qk = tl.dot(q, k, allow_tf32=ALLOW_TF32) * alpha
     if ATTN_BIAS_TYPE == "fused":
         attn_bias = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -338,25 +368,25 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     if HAS_ATTN_SCALE:
         silu = silu * attn_scale[:, None]
 
-    v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
+    # v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
     silu = silu.to(v.dtype)
     return tl.dot(silu, v, allow_tf32=ALLOW_TF32)
 
 
-@triton.autotune(
-    configs=_get_fw_configs(),
-    key=[
-        "Z",
-        "H",
-        "MAX_SEQ_LEN",
-        "DimQ",
-        "DimV",
-        "BUCKET_FN",
-        "ATTN_BIAS_TYPE",
-        "DeltaSize",
-        "IS_DELTA_Q",
-    ],
-)
+# @triton.autotune(
+#     configs=_get_fw_configs(),
+#     key=[
+#         "Z",
+#         "H",
+#         "MAX_SEQ_LEN",
+#         "DimQ",
+#         "DimV",
+#         "BUCKET_FN",
+#         "ATTN_BIAS_TYPE",
+#         "DeltaSize",
+#         "IS_DELTA_Q",
+#     ],
+# )
 @triton.jit
 def _ragged_hstu_attn_fwd(  # noqa C901
     Q,
@@ -507,6 +537,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
 
     # pyre-ignore[61]
     for start_n in range(low, high, BLOCK_N):
+        boundary_check = start_n > high - BLOCK_N
         acc += _ragged_hstu_attn_fwd_one_block(
             start_n=start_n,
             seq_len=seq_len,
@@ -552,6 +583,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
             ALLOW_TF32=ALLOW_TF32,
             BLOCK_M=BLOCK_M,
             BLOCK_N=BLOCK_N,
+            BOUNDARY_CHECK=boundary_check,
         )
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
@@ -565,6 +597,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
             K_block_ptr = tl.advance(K_block_ptr, (0, offset))
             V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
             for start_delta in range(low_delta, high_delta, BLOCK_N):
+                boundary_check = start_delta > high_delta - BLOCK_N
                 acc += _ragged_hstu_attn_fwd_one_block(
                     start_n=start_delta,
                     seq_len=seq_len,
@@ -614,6 +647,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                     ALLOW_TF32=ALLOW_TF32,
                     BLOCK_M=BLOCK_M,
                     BLOCK_N=BLOCK_N,
+                    BOUNDARY_CHECK=boundary_check
                 )
                 K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
                 V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
@@ -664,6 +698,8 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         Z = seq_offsets.numel() - 1
         L, H, DimQ = q.shape
         _, _, DimV = v.shape
+
+        # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
 
         out = torch.empty_like(v)
         has_multiple_targets = num_targets is not None
@@ -734,7 +770,16 @@ class _RaggedAttentionFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
+            BLOCK_M = 64, 
+            BLOCK_N = 32, 
+            matrix_instr_nonkdim = 16,
+            waves_per_eu = 2, 
+            num_stages=1, 
+            num_warps=4,
         )
+
+        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
+
         return out
 
 
@@ -772,6 +817,7 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
         _, H, DimQ = q.shape
         _, _, DimV = v.shape
         out = torch.empty_like(v)
+        # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
         grid = lambda meta: (  # noqa E731
             triton.cdiv(N, meta["BLOCK_M"]),
             Z * H,
@@ -838,4 +884,7 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
         )
+
+        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
+
         return out
