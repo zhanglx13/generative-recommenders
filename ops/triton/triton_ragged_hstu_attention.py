@@ -537,7 +537,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
 
     # pyre-ignore[61]
     for start_n in range(low, high, BLOCK_N):
-        boundary_check = start_n > high - BLOCK_N
+        boundary_check = (start_n > high - BLOCK_N)
         acc += _ragged_hstu_attn_fwd_one_block(
             start_n=start_n,
             seq_len=seq_len,
@@ -597,7 +597,8 @@ def _ragged_hstu_attn_fwd(  # noqa C901
             K_block_ptr = tl.advance(K_block_ptr, (0, offset))
             V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
             for start_delta in range(low_delta, high_delta, BLOCK_N):
-                boundary_check = start_delta > high_delta - BLOCK_N
+                boundary_check = (start_delta > seq_len - BLOCK_N) or (start_delta > high_delta - BLOCK_N)
+                # boundary_check = True
                 acc += _ragged_hstu_attn_fwd_one_block(
                     start_n=start_delta,
                     seq_len=seq_len,
@@ -883,6 +884,12 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
+            BLOCK_M = 64, 
+            BLOCK_N = 32, 
+            matrix_instr_nonkdim = 16,
+            waves_per_eu = 2, 
+            num_stages=1, 
+            num_warps=4,
         )
 
         # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
