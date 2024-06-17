@@ -607,7 +607,6 @@ def _ragged_hstu_attn_fwd(  # noqa C901
             V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
             for start_delta in range(low_delta, high_delta, BLOCK_N):
                 boundary_check = (start_delta > seq_len - BLOCK_N) or (start_delta > high_delta - BLOCK_N)
-                # boundary_check = True
                 acc += _ragged_hstu_attn_fwd_one_block(
                     start_n=start_delta,
                     seq_len=seq_len,
