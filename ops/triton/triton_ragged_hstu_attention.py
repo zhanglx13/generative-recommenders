@@ -275,6 +275,7 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
         v = tl.load(V_block_ptr)
 
     qk = tl.dot(q, k, allow_tf32=ALLOW_TF32) * alpha
+
     if ATTN_BIAS_TYPE == "fused":
         attn_bias = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if USE_TIME_BIAS:
@@ -369,24 +370,32 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
         silu = silu * attn_scale[:, None]
 
     # v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
+    # if BOUNDARY_CHECK:
+    #     # k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
+    #     v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
+    # else:
+    #     # k = tl.load(K_block_ptr)
+    #     v = tl.load(V_block_ptr)
+
+    # v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
     silu = silu.to(v.dtype)
     return tl.dot(silu, v, allow_tf32=ALLOW_TF32)
 
 
-# @triton.autotune(
-#     configs=_get_fw_configs(),
-#     key=[
-#         "Z",
-#         "H",
-#         "MAX_SEQ_LEN",
-#         "DimQ",
-#         "DimV",
-#         "BUCKET_FN",
-#         "ATTN_BIAS_TYPE",
-#         "DeltaSize",
-#         "IS_DELTA_Q",
-#     ],
-# )
+@triton.autotune(
+    configs=_get_fw_configs(),
+    key=[
+        "Z",
+        "H",
+        "MAX_SEQ_LEN",
+        "DimQ",
+        "DimV",
+        "BUCKET_FN",
+        "ATTN_BIAS_TYPE",
+        "DeltaSize",
+        "IS_DELTA_Q",
+    ],
+)
 @triton.jit
 def _ragged_hstu_attn_fwd(  # noqa C901
     Q,
@@ -537,7 +546,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
 
     # pyre-ignore[61]
     for start_n in range(low, high, BLOCK_N):
-        boundary_check = (start_n > high - BLOCK_N)
+        boundary_check = (start_n > high - BLOCK_N) or (start_n > seq_len - BLOCK_N)
         acc += _ragged_hstu_attn_fwd_one_block(
             start_n=start_n,
             seq_len=seq_len,
@@ -771,12 +780,12 @@ class _RaggedAttentionFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            BLOCK_M = 64, 
-            BLOCK_N = 32, 
-            matrix_instr_nonkdim = 16,
-            waves_per_eu = 2, 
-            num_stages=1, 
-            num_warps=4,
+            # BLOCK_M = 64, 
+            # BLOCK_N = 32, 
+            # matrix_instr_nonkdim = 16,
+            # waves_per_eu = 2, 
+            # num_stages=1, 
+            # num_warps=4,
         )
 
         # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
@@ -884,12 +893,12 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            BLOCK_M = 64, 
-            BLOCK_N = 32, 
-            matrix_instr_nonkdim = 16,
-            waves_per_eu = 2, 
-            num_stages=1, 
-            num_warps=4,
+            # BLOCK_M = 64, 
+            # BLOCK_N = 32, 
+            # matrix_instr_nonkdim = 16,
+            # waves_per_eu = 2,
+            # num_stages=1, 
+            # num_warps=4,
         )
 
         # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")

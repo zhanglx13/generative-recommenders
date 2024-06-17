@@ -102,7 +102,7 @@ def main(
     alpha = 1.0 / (attn_dim**0.5)
     invalid_attn_mask_type = "lower_triangular"
     lengths = torch.zeros(batch_size, device=torch.device("cuda")) + actual_seq_len
-    print(f"lengths1 = {lengths}")
+    # print(f"lengths1 = {lengths}")
     lengths = lengths + target_size
     num_targets = torch.randint(
         target_size, size=(batch_size,), device=torch.device("cuda")
@@ -112,13 +112,13 @@ def main(
     )
     seq_offsets[1:] = torch.cumsum(lengths, dim=0)
     L = int(seq_offsets[-1].item())
-    print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
+    # print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
     x = torch.empty(
         (L, heads * (2 * attn_dim + 2 * hidden_dim)),
         dtype=dtype,
         device=torch.device("cuda"),
     ).uniform_(-0.01, 0.01)
-    print(f"x_shape = {x.shape}")
+    # print(f"x_shape = {x.shape}")
     u, v, q, k = torch.split(
         x,
         [hidden_dim * heads, hidden_dim * heads, attn_dim * heads, attn_dim * heads],
@@ -127,10 +127,10 @@ def main(
     q = q.view(-1, heads, attn_dim)
     k = q.view(-1, heads, attn_dim)
     v = q.view(-1, heads, hidden_dim)
-    print(f"x = {x.shape}, q = {q.shape}, k = {k.shape}, v = {k.shape}")
-    print(f"q_stride = ({q.stride(0)}, {q.stride(1)}, {q.stride(2)})")
-    print(f"k_stride = ({k.stride(0)}, {k.stride(1)}, {v.stride(2)})")
-    print(f"v_stride = ({v.stride(0)}, {v.stride(1)}, {v.stride(2)})")
+    # print(f"x = {x.shape}, q = {q.shape}, k = {k.shape}, v = {k.shape}")
+    # print(f"q_stride = ({q.stride(0)}, {q.stride(1)}, {q.stride(2)})")
+    # print(f"k_stride = ({k.stride(0)}, {k.stride(1)}, {v.stride(2)})")
+    # print(f"v_stride = ({v.stride(0)}, {v.stride(1)}, {v.stride(2)})")
 
 
     causal = True
@@ -149,7 +149,7 @@ def main(
         .uniform_(-0.1, 0.1)
         .to(dtype=torch.bfloat16)
     )
-    print(f"ts_weights = {ts_weights.shape}, time_stamp = {timestamps.shape}")
+    # print(f"ts_weights = {ts_weights.shape}, time_stamp = {timestamps.shape}")
     pos_weights: torch.Tensor = (
         torch.empty(
             (2 * max_pos_ind - 1,),
@@ -159,7 +159,7 @@ def main(
         .uniform_(-0.1, 0.1)
         .to(dtype=torch.bfloat16)
     )
-    print(f"pos_weight = {pos_weights.shape}")
+    # print(f"pos_weight = {pos_weights.shape}")
     relative_bias_type = "ALL"
 
     if not no_relative_bias:
