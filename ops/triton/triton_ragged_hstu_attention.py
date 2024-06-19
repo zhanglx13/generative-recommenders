@@ -38,8 +38,8 @@ except ImportError:
 def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
     configs = []
     if torch.version.hip:
-        # configs = [
-            # triton.Config({'BLOCK_M': 64, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 16, 'waves_per_eu': 2}, num_stages=1, num_warps=4),]
+        configs = [
+            triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 0}, num_stages=1, num_warps=8),]
 
         # configs = [
         #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
@@ -47,7 +47,6 @@ def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
         #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
         #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
         #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
-
         #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
         #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
         #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
@@ -60,25 +59,25 @@ def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
         #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
         #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
         # ]
-        configs = []
-        for BLOCK_M in [32, 64]:
-            for BLOCK_N in [32, 64]:
-                for num_stages in [1]:
-                    for num_warps in [4, 8]:
-                        for matrix_instr_nonkdim in [16, 32]:
-                            for waves_per_eu in [0, 2]:
-                                configs.append(
-                                    triton.Config(
-                                        {
-                                            "BLOCK_M": BLOCK_M,
-                                            "BLOCK_N": BLOCK_N,
-                                            "matrix_instr_nonkdim": matrix_instr_nonkdim,
-                                            "waves_per_eu": waves_per_eu,
-                                        },
-                                        num_stages=num_stages,
-                                        num_warps=num_warps,
-                                    )
-                                )
+        # configs = []
+        # for BLOCK_M in [32, 64]:
+        #     for BLOCK_N in [32, 64]:
+        #         for num_stages in [1]:
+        #             for num_warps in [4, 8]:
+        #                 for matrix_instr_nonkdim in [16, 32]:
+        #                     for waves_per_eu in [0, 2]:
+        #                         configs.append(
+        #                             triton.Config(
+        #                                 {
+        #                                     "BLOCK_M": BLOCK_M,
+        #                                     "BLOCK_N": BLOCK_N,
+        #                                     "matrix_instr_nonkdim": matrix_instr_nonkdim,
+        #                                     "waves_per_eu": waves_per_eu,
+        #                                 },
+        #                                 num_stages=num_stages,
+        #                                 num_warps=num_warps,
+        #                             )
+        #                         )
     else:
         configs = [
             triton.Config(
@@ -267,6 +266,7 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     start_n = tl.multiple_of(start_n, BLOCK_N)
     mask_n = offs_n < seq_len - start_n
     # -- compute qk ----
+    # k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
     if BOUNDARY_CHECK:
         k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
         v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
@@ -456,17 +456,27 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     # off_h = off_hz % H
 
     n_tile_num = tl.cdiv(MAX_SEQ_LEN, BLOCK_M)
-    total_tiles = n_tile_num * Z * H
-    num_progs = tl.num_programs(0)
     prog_id = tl.program_id(0)
+    num_progs = tl.num_programs(0)
 
-    tile_idx = tl.program_id(0)
+    total_tiles = n_tile_num * Z * H
 
-    for idx in range(0, total_tiles - num_progs, num_progs):
-        tile_idx = prog_id + idx
-        pid = tile_idx // n_tile_num
-        off_z = tile_idx % n_tile_num // H
-        off_h = tile_idx % n_tile_num % H
+    tiles_per_sm = total_tiles // num_progs
+    if prog_id < total_tiles % num_progs:
+        tiles_per_sm += 1
+
+    # if prog_id == 176:
+    #     tl.device_print("tiles_per_sm = ", tiles_per_sm)
+
+    tile_idx = prog_id
+    for _ in range(0, tiles_per_sm):
+        pid = tile_idx // (Z * H)
+        off_hz = tile_idx % (Z * H)
+        off_z = off_hz // H
+        off_h = off_hz % H
+
+        # if prog_id == 0:
+        #     tl.device_print("off_hz = ", off_hz)
 
         seq_start = tl.load(seq_offsets + off_z)
         seq_end = tl.load(seq_offsets + off_z + 1)
@@ -478,8 +488,8 @@ def _ragged_hstu_attn_fwd(  # noqa C901
         else:
             start_m_delta = 0
             start_m = pid * BLOCK_M
-        if start_m < seq_len:
             
+        if start_m < seq_len:
             if HAS_MULTIPLE_TARGETS:
                 n_targets = tl.load(num_targets + off_z)
 
@@ -561,6 +571,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
             # pyre-ignore[61]
             for start_n in range(low, high, BLOCK_N):
                 boundary_check = (start_n > high - BLOCK_N) or (start_n > seq_len - BLOCK_N)
+                # boundary_check = True
                 acc += _ragged_hstu_attn_fwd_one_block(
                     start_n=start_n,
                     seq_len=seq_len,
@@ -621,6 +632,8 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                     V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
                     for start_delta in range(low_delta, high_delta, BLOCK_N):
                         boundary_check = (start_delta > seq_len - BLOCK_N) or (start_delta > high_delta - BLOCK_N)
+                        boundary_check = True
+
                         acc += _ragged_hstu_attn_fwd_one_block(
                             start_n=start_delta,
                             seq_len=seq_len,
@@ -698,6 +711,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                 )
                 out_ptrs = Out + off_o
                 tl.store(out_ptrs, acc, mask=(offs_m < seq_len)[:, None])
+        tile_idx += num_progs
 
 
 class _RaggedAttentionFunction(torch.autograd.Function):
@@ -733,7 +747,7 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         #     triton.cdiv(N, meta["BLOCK_M"]),
         #     Z * H,
         # )
-        grid = (304, )
+        grid = (608, )
 
         stride_sz = 0
         stride_sm = 0
@@ -794,12 +808,12 @@ class _RaggedAttentionFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 64, 
+            # BLOCK_M = 32, 
             # BLOCK_N = 32, 
             # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 2, 
+            # waves_per_eu = 0, 
             # num_stages=1, 
-            # num_warps=4,
+            # num_warps=8,
         )
 
         # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
@@ -846,7 +860,7 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
         #     triton.cdiv(N, meta["BLOCK_M"]),
         #     Z * H,
         # )
-        grid = (304, )
+        grid = (608, )
 
         stride_sz = 0
         stride_sm = 0
@@ -909,12 +923,12 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 64, 
+            # BLOCK_M = 32, 
             # BLOCK_N = 32, 
             # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 2,
+            # waves_per_eu = 0, 
             # num_stages=1, 
-            # num_warps=4,
+            # num_warps=8,
         )
 
         # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")

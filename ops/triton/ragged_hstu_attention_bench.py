@@ -112,7 +112,7 @@ def main(
     )
     seq_offsets[1:] = torch.cumsum(lengths, dim=0)
     L = int(seq_offsets[-1].item())
-    # print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
+    print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
     x = torch.empty(
         (L, heads * (2 * attn_dim + 2 * hidden_dim)),
         dtype=dtype,
