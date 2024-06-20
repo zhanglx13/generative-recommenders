@@ -440,11 +440,6 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
-    # M_CTX == N_CTX
-    # off_hz = tl.program_id(1)
-    # off_z = off_hz // H
-    # off_h = off_hz % H
-
     n_tile_num = tl.cdiv(MAX_SEQ_LEN, BLOCK_M)
     prog_id = tl.program_id(0)
     num_progs = tl.num_programs(0)
@@ -457,8 +452,8 @@ def _ragged_hstu_attn_fwd(  # noqa C901
 
     tile_idx = prog_id
     for _ in range(0, tiles_per_sm):
-        pid = tile_idx // (Z * H)
-        off_hz = tile_idx % (Z * H)
+        pid = (total_tiles - tile_idx) // (Z * H)
+        off_hz = (total_tiles - tile_idx) % (Z * H)
         off_z = off_hz // H
         off_h = off_hz % H
 
@@ -726,7 +721,7 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         has_attn_bias = attn_bias is not None
         has_attn_scale = attn_scale is not None
 
-        grid = (608, )
+        grid = (1216, )
 
         stride_sz = 0
         stride_sm = 0
@@ -835,7 +830,7 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
         _, _, DimV = v.shape
         out = torch.empty_like(v)
         # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
-        grid = (608, )
+        grid = (1216, )
 
         stride_sz = 0
         stride_sm = 0
