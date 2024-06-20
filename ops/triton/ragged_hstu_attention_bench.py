@@ -5,6 +5,7 @@ import click
 
 import torch
 import triton
+import pytest
 # from generative_recommenders.ops.triton.triton_ragged_hstu_attention import (
 #     _RaggedAttentionFunction,
 #     _RaggedAttentionRelativeBiasFunction,
@@ -14,6 +15,9 @@ from triton_ragged_hstu_attention import (
     _RaggedAttentionFunction,
     _RaggedAttentionRelativeBiasFunction,
 )
+
+from triton_ragged_hstu_attention_ref import _RaggedAttentionFunction as _RaggedAttentionFunction_ref
+from triton_ragged_hstu_attention_ref import _RaggedAttentionRelativeBiasFunction as _RaggedAttentionRelativeBiasFunction_ref
 
 from torch.profiler import profile, ProfilerActivity
 
@@ -67,6 +71,61 @@ def generate_hstu_timestamps(batch_size: int, seq_len: int) -> torch.Tensor:
     return timestamps.long()
 
 
+def gen_inputs(dtype, attn_dim, batch_size, actual_seq_len, target_size, heads, hidden_dim, num_buckets, max_pos_ind):
+    lengths = torch.zeros(batch_size, device=torch.device("cuda")) + actual_seq_len
+    # print(f"lengths1 = {lengths}")
+    lengths = lengths + target_size
+    num_targets = torch.randint(
+        target_size, size=(batch_size,), device=torch.device("cuda")
+    )
+    seq_offsets = torch.zeros(
+        (batch_size + 1,), dtype=torch.int64, device=torch.device("cuda")
+    )
+    seq_offsets[1:] = torch.cumsum(lengths, dim=0)
+    L = int(seq_offsets[-1].item())
+    print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
+    x = torch.empty(
+        (L, heads * (2 * attn_dim + 2 * hidden_dim)),
+        dtype=dtype,
+        device=torch.device("cuda"),
+    ).uniform_(-0.01, 0.01)
+    # print(f"x_shape = {x.shape}")
+    u, v, q, k = torch.split(
+        x,
+        [hidden_dim * heads, hidden_dim * heads, attn_dim * heads, attn_dim * heads],
+        dim=-1,
+    )
+    q = q.view(-1, heads, attn_dim)
+    k = q.view(-1, heads, attn_dim)
+    v = q.view(-1, heads, hidden_dim)
+    print(f"x = {x.shape}, q = {q.shape}, k = {k.shape}, v = {k.shape}")
+    print(f"q_stride = ({q.stride(0)}, {q.stride(1)}, {q.stride(2)})")
+    print(f"k_stride = ({k.stride(0)}, {k.stride(1)}, {v.stride(2)})")
+    print(f"v_stride = ({v.stride(0)}, {v.stride(1)}, {v.stride(2)})")
+
+    ts_weights: torch.Tensor = (
+        torch.empty(
+            (num_buckets + 1,),
+            device="cuda",
+            dtype=torch.float32,
+        )
+        .uniform_(-0.1, 0.1)
+        .to(dtype=torch.bfloat16)
+    )
+    # print(f"ts_weights = {ts_weights.shape}, time_stamp = {timestamps.shape}")
+    pos_weights: torch.Tensor = (
+        torch.empty(
+            (2 * max_pos_ind - 1,),
+            device="cuda",
+            dtype=torch.float32,
+        )
+        .uniform_(-0.1, 0.1)
+        .to(dtype=torch.bfloat16)
+    )
+
+    return lengths, num_targets, seq_offsets, u, v, q, k, ts_weights, pos_weights
+
+
 @click.command()
 @click.option(
     "--batch-size",
@@ -101,36 +160,37 @@ def main(
     rep = 1000
     alpha = 1.0 / (attn_dim**0.5)
     invalid_attn_mask_type = "lower_triangular"
-    lengths = torch.zeros(batch_size, device=torch.device("cuda")) + actual_seq_len
-    # print(f"lengths1 = {lengths}")
-    lengths = lengths + target_size
-    num_targets = torch.randint(
-        target_size, size=(batch_size,), device=torch.device("cuda")
-    )
-    seq_offsets = torch.zeros(
-        (batch_size + 1,), dtype=torch.int64, device=torch.device("cuda")
-    )
-    seq_offsets[1:] = torch.cumsum(lengths, dim=0)
-    L = int(seq_offsets[-1].item())
-    print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
-    x = torch.empty(
-        (L, heads * (2 * attn_dim + 2 * hidden_dim)),
-        dtype=dtype,
-        device=torch.device("cuda"),
-    ).uniform_(-0.01, 0.01)
-    # print(f"x_shape = {x.shape}")
-    u, v, q, k = torch.split(
-        x,
-        [hidden_dim * heads, hidden_dim * heads, attn_dim * heads, attn_dim * heads],
-        dim=-1,
-    )
-    q = q.view(-1, heads, attn_dim)
-    k = q.view(-1, heads, attn_dim)
-    v = q.view(-1, heads, hidden_dim)
+    # lengths = torch.zeros(batch_size, device=torch.device("cuda")) + actual_seq_len
+    # # print(f"lengths1 = {lengths}")
+    # lengths = lengths + target_size
+    # num_targets = torch.randint(
+    #     target_size, size=(batch_size,), device=torch.device("cuda")
+    # )
+    # seq_offsets = torch.zeros(
+    #     (batch_size + 1,), dtype=torch.int64, device=torch.device("cuda")
+    # )
+    # seq_offsets[1:] = torch.cumsum(lengths, dim=0)
+    # L = int(seq_offsets[-1].item())
+    # # print(f"lengths = {lengths}\n num_targets = {num_targets}\n seq_offsets = {seq_offsets}\n L = {L}")
+    # x = torch.empty(
+    #     (L, heads * (2 * attn_dim + 2 * hidden_dim)),
+    #     dtype=dtype,
+    #     device=torch.device("cuda"),
+    # ).uniform_(-0.01, 0.01)
+    # # print(f"x_shape = {x.shape}")
+    # u, v, q, k = torch.split(
+    #     x,
+    #     [hidden_dim * heads, hidden_dim * heads, attn_dim * heads, attn_dim * heads],
+    #     dim=-1,
+    # )
+    # q = q.view(-1, heads, attn_dim)
+    # k = q.view(-1, heads, attn_dim)
+    # v = q.view(-1, heads, hidden_dim)
     # print(f"x = {x.shape}, q = {q.shape}, k = {k.shape}, v = {k.shape}")
     # print(f"q_stride = ({q.stride(0)}, {q.stride(1)}, {q.stride(2)})")
     # print(f"k_stride = ({k.stride(0)}, {k.stride(1)}, {v.stride(2)})")
     # print(f"v_stride = ({v.stride(0)}, {v.stride(1)}, {v.stride(2)})")
+
 
 
     causal = True
@@ -139,26 +199,29 @@ def main(
     time_bucket_fn = "sqrt"
     time_bucket_incr = 60
     time_bucket_div = 1.0
+
+    # ts_weights: torch.Tensor = (
+    #     torch.empty(
+    #         (num_buckets + 1,),
+    #         device="cuda",
+    #         dtype=torch.float32,
+    #     )
+    #     .uniform_(-0.1, 0.1)
+    #     .to(dtype=torch.bfloat16)
+    # )
+    # # print(f"ts_weights = {ts_weights.shape}, time_stamp = {timestamps.shape}")
+    # pos_weights: torch.Tensor = (
+    #     torch.empty(
+    #         (2 * max_pos_ind - 1,),
+    #         device="cuda",
+    #         dtype=torch.float32,
+    #     )
+    #     .uniform_(-0.1, 0.1)
+    #     .to(dtype=torch.bfloat16)
+    # )
+
+    lengths, num_targets, seq_offsets, u, v, q, k, ts_weights, pos_weights = gen_inputs(dtype, attn_dim, batch_size, actual_seq_len, target_size, heads, hidden_dim, num_buckets, max_pos_ind)
     timestamps = generate_hstu_timestamps(batch_size, int(lengths.max().item()))
-    ts_weights: torch.Tensor = (
-        torch.empty(
-            (num_buckets + 1,),
-            device="cuda",
-            dtype=torch.float32,
-        )
-        .uniform_(-0.1, 0.1)
-        .to(dtype=torch.bfloat16)
-    )
-    # print(f"ts_weights = {ts_weights.shape}, time_stamp = {timestamps.shape}")
-    pos_weights: torch.Tensor = (
-        torch.empty(
-            (2 * max_pos_ind - 1,),
-            device="cuda",
-            dtype=torch.float32,
-        )
-        .uniform_(-0.1, 0.1)
-        .to(dtype=torch.bfloat16)
-    )
     # print(f"pos_weight = {pos_weights.shape}")
     relative_bias_type = "ALL"
 
@@ -215,3 +278,114 @@ def main(
 if __name__ == "__main__":
     main()
 
+
+@pytest.mark.parametrize("batch_size, heads, attn_dim, hidden_dim, max_seq_len, actual_seq_len, target_size, max_pos_ind, no_relative_bias",
+                         [(32, 4, 128, 128, 2550, 1616, 512, 4086, True),
+                         (32, 4, 128, 128, 1264, 745, 512, 1024, True),
+                         (32, 4, 128, 128, 2550, 1616, 512, 4086, False),
+                         (32, 4, 128, 128, 1264, 745, 512, 1024, False)],)
+def test_correctness(
+    batch_size: int,
+    heads: int,
+    attn_dim: int,
+    hidden_dim: int,
+    max_seq_len: int,  # for repro
+    actual_seq_len: int,  # for repro
+    target_size: int,
+    max_pos_ind: int,
+    no_relative_bias: bool,
+):
+
+    dtype = torch.bfloat16
+    alpha = 1.0 / (attn_dim**0.5)
+    invalid_attn_mask_type = "lower_triangular"
+    num_buckets = 2048
+
+    lengths, num_targets, seq_offsets, u, v, q, k, ts_weights, pos_weights = gen_inputs(dtype, attn_dim, batch_size, actual_seq_len, target_size, heads, hidden_dim, num_buckets, max_pos_ind)
+
+    causal = True
+    time_delta = 0.01
+    time_bucket_fn = "sqrt"
+    time_bucket_incr = 60
+    time_bucket_div = 1.0
+    timestamps = generate_hstu_timestamps(batch_size, int(lengths.max().item()))
+    # print(f"pos_weight = {pos_weights.shape}")
+    relative_bias_type = "ALL"
+
+    if not no_relative_bias:
+        out_ref = _RaggedAttentionRelativeBiasFunction_ref.apply(
+            max_seq_len,
+            alpha,
+            q,
+            k,
+            v,
+            seq_offsets,
+            invalid_attn_mask_type,
+            timestamps,
+            ts_weights,
+            pos_weights,
+            causal,
+            num_buckets,
+            time_bucket_fn,
+            time_bucket_incr,
+            time_bucket_div,
+            time_delta,
+            max_pos_ind,
+            num_targets,
+            None,
+            relative_bias_type,
+        )
+
+        out = _RaggedAttentionRelativeBiasFunction.apply(
+            max_seq_len,
+            alpha,
+            q,
+            k,
+            v,
+            seq_offsets,
+            invalid_attn_mask_type,
+            timestamps,
+            ts_weights,
+            pos_weights,
+            causal,
+            num_buckets,
+            time_bucket_fn,
+            time_bucket_incr,
+            time_bucket_div,
+            time_delta,
+            max_pos_ind,
+            num_targets,
+            None,
+            relative_bias_type,
+        )
+
+    else:
+        out_ref = _RaggedAttentionFunction_ref.apply(
+            max_seq_len,
+            alpha,
+            q,
+            k,
+            v,
+            seq_offsets,
+            invalid_attn_mask_type,
+            num_targets,
+            None,
+            None,
+            None,
+        )
+
+        out = _RaggedAttentionFunction.apply(
+            max_seq_len,
+            alpha,
+            q,
+            k,
+            v,
+            seq_offsets,
+            invalid_attn_mask_type,
+            num_targets,
+            None,
+            None,
+            None,
+        )
+
+    torch.testing.assert_close(out, out_ref, atol=1e-4, rtol=0)

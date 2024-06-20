@@ -38,31 +38,9 @@ except ImportError:
 def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
     configs = []
     if torch.version.hip:
-        # configs = [
-            # triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 0}, num_stages=1, num_warps=8),]
-
-        configs = [
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=4),
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-False
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-True
-
-            triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=4),
-            triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
-        ]
-        configs = []
         for BLOCK_M in [32, 64]:
             for BLOCK_N in [32, 64]:
-                for num_stages in [1]:
+                for num_stages in [0]:
                     for num_warps in [4, 8]:
                         for matrix_instr_nonkdim in [16, 32]:
                             for waves_per_eu in [0, 2]:
@@ -261,20 +239,12 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     ALLOW_TF32: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    BOUNDARY_CHECK: tl.constexpr,
 ):
     start_n = tl.multiple_of(start_n, BLOCK_N)
     mask_n = offs_n < seq_len - start_n
     # -- compute qk ----
-    if BOUNDARY_CHECK:
-        k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
-        v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
-    else:
-        k = tl.load(K_block_ptr)
-        v = tl.load(V_block_ptr)
-
+    k = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
     qk = tl.dot(q, k, allow_tf32=ALLOW_TF32) * alpha
-
     if ATTN_BIAS_TYPE == "fused":
         attn_bias = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if USE_TIME_BIAS:
@@ -368,6 +338,7 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     if HAS_ATTN_SCALE:
         silu = silu * attn_scale[:, None]
 
+    v = tl.load(V_block_ptr, boundary_check=(0,), padding_option="zero")
     silu = silu.to(v.dtype)
     return tl.dot(silu, v, allow_tf32=ALLOW_TF32)
 
@@ -441,122 +412,161 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     BLOCK_N: tl.constexpr,
 ):
     # M_CTX == N_CTX
-    # off_hz = tl.program_id(1)
-    # off_z = off_hz // H
-    # off_h = off_hz % H
+    off_hz = tl.program_id(1)
+    off_z = off_hz // H
+    off_h = off_hz % H
+    seq_start = tl.load(seq_offsets + off_z)
+    seq_end = tl.load(seq_offsets + off_z + 1)
+    seq_len = (seq_end - seq_start).to(tl.int32)
+    if IS_DELTA_Q:
+        start_m_delta = tl.program_id(0) * BLOCK_M
+        delta_start = tl.load(delta_x_offsets + off_z * DeltaSize)
+        start_m = (start_m_delta + delta_start - seq_start).to(tl.int32)
+    else:
+        start_m_delta = 0
+        start_m = tl.program_id(0) * BLOCK_M
+    if start_m >= seq_len:
+        return
+    if HAS_MULTIPLE_TARGETS:
+        n_targets = tl.load(num_targets + off_z)
 
-    n_tile_num = tl.cdiv(MAX_SEQ_LEN, BLOCK_M)
-    prog_id = tl.program_id(0)
-    num_progs = tl.num_programs(0)
-
-    total_tiles = n_tile_num * Z * H
-
-    tiles_per_sm = total_tiles // num_progs
-    if prog_id < total_tiles % num_progs:
-        tiles_per_sm += 1
-
-    tile_idx = prog_id
-    for _ in range(0, tiles_per_sm):
-        pid = tile_idx // (Z * H)
-        off_hz = tile_idx % (Z * H)
-        off_z = off_hz // H
-        off_h = off_hz % H
-
-        seq_start = tl.load(seq_offsets + off_z)
-        seq_end = tl.load(seq_offsets + off_z + 1)
-        seq_len = (seq_end - seq_start).to(tl.int32)
-        if IS_DELTA_Q:
-            start_m_delta = pid * BLOCK_M
-            delta_start = tl.load(delta_x_offsets + off_z * DeltaSize)
-            start_m = (start_m_delta + delta_start - seq_start).to(tl.int32)
+    # initialize offsets
+    offs_m = start_m + tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    if IS_DELTA_Q:
+        Q_block_ptr = tl.make_block_ptr(
+            base=Q + off_h * stride_qh + off_z * DeltaSize * stride_qm,
+            shape=(DeltaSize, BLOCK_D_Q),
+            strides=(stride_qm, 1),
+            offsets=(start_m_delta, 0),
+            block_shape=(BLOCK_M, BLOCK_D_Q),
+            order=(1, 0),
+        )
+    else:
+        Q_block_ptr = tl.make_block_ptr(
+            base=Q + off_h * stride_qh + seq_start * stride_qm,
+            shape=(seq_len, BLOCK_D_Q),
+            strides=(stride_qm, 1),
+            offsets=(start_m, 0),
+            block_shape=(BLOCK_M, BLOCK_D_Q),
+            order=(1, 0),
+        )
+    K_block_ptr = tl.make_block_ptr(
+        base=K + off_h * stride_kh + seq_start * stride_kn,
+        shape=(BLOCK_D_Q, seq_len),
+        strides=(1, stride_kn),
+        offsets=(0, 0),
+        block_shape=(BLOCK_D_Q, BLOCK_N),
+        order=(0, 1),
+    )
+    V_block_ptr = tl.make_block_ptr(
+        base=V + off_h * stride_vh + seq_start * stride_vn,
+        shape=(seq_len, BLOCK_D_V),
+        strides=(stride_vn, 1),
+        offsets=(0, 0),
+        block_shape=(BLOCK_N, BLOCK_D_V),
+        order=(1, 0),
+    )
+    mask_m = offs_m < seq_len
+    if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS:
+        ts_0_ptrs = TS + off_z * stride_ts + offs_m
+        ts_1_ptrs = TS + off_z * stride_ts + offs_n
+        if CAUSAL:
+            ts_0 = tl.load(ts_0_ptrs + 1, mask=mask_m)
         else:
-            start_m_delta = 0
-            start_m = pid * BLOCK_M
-        
-        if start_m < seq_len:
-            if HAS_MULTIPLE_TARGETS:
-                n_targets = tl.load(num_targets + off_z)
+            ts_0 = tl.load(ts_0_ptrs, mask=mask_m)
+    elif ATTN_BIAS_TYPE == "separate":
+        seq2_start = tl.load(seq2_offsets + off_z)
+        bias_start = seq2_start * H + off_h * seq_len * seq_len
+        off_bias = offs_m[:, None] * seq_len + offs_n[None, :]
+        bias_ptrs = Bias + bias_start + off_bias
 
-            # initialize offsets
-            offs_m = start_m + tl.arange(0, BLOCK_M)
-            offs_n = tl.arange(0, BLOCK_N)
-            if IS_DELTA_Q:
-                Q_block_ptr = tl.make_block_ptr(
-                    base=Q + off_h * stride_qh + off_z * DeltaSize * stride_qm,
-                    shape=(DeltaSize, BLOCK_D_Q),
-                    strides=(stride_qm, 1),
-                    offsets=(start_m_delta, 0),
-                    block_shape=(BLOCK_M, BLOCK_D_Q),
-                    order=(1, 0),
-                )
-            else:
-                Q_block_ptr = tl.make_block_ptr(
-                    base=Q + off_h * stride_qh + seq_start * stride_qm,
-                    shape=(seq_len, BLOCK_D_Q),
-                    strides=(stride_qm, 1),
-                    offsets=(start_m, 0),
-                    block_shape=(BLOCK_M, BLOCK_D_Q),
-                    order=(1, 0),
-                )
-            K_block_ptr = tl.make_block_ptr(
-                base=K + off_h * stride_kh + seq_start * stride_kn,
-                shape=(BLOCK_D_Q, seq_len),
-                strides=(1, stride_kn),
-                offsets=(0, 0),
-                block_shape=(BLOCK_D_Q, BLOCK_N),
-                order=(0, 1),
-            )
-            V_block_ptr = tl.make_block_ptr(
-                base=V + off_h * stride_vh + seq_start * stride_vn,
-                shape=(seq_len, BLOCK_D_V),
-                strides=(stride_vn, 1),
-                offsets=(0, 0),
-                block_shape=(BLOCK_N, BLOCK_D_V),
-                order=(1, 0),
-            )
-            mask_m = offs_m < seq_len
-            if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS:
-                ts_0_ptrs = TS + off_z * stride_ts + offs_m
-                ts_1_ptrs = TS + off_z * stride_ts + offs_n
-                if CAUSAL:
-                    ts_0 = tl.load(ts_0_ptrs + 1, mask=mask_m)
-                else:
-                    ts_0 = tl.load(ts_0_ptrs, mask=mask_m)
-            elif ATTN_BIAS_TYPE == "separate":
-                seq2_start = tl.load(seq2_offsets + off_z)
-                bias_start = seq2_start * H + off_h * seq_len * seq_len
-                off_bias = offs_m[:, None] * seq_len + offs_n[None, :]
-                bias_ptrs = Bias + bias_start + off_bias
+    if HAS_ATTN_SCALE:
+        scale_ptrs = Scale + off_z * stride_sz
+        attn_scale = tl.load(scale_ptrs + offs_m * stride_sm, mask=offs_m < seq_len)
 
-            if HAS_ATTN_SCALE:
-                scale_ptrs = Scale + off_z * stride_sz
-                attn_scale = tl.load(scale_ptrs + offs_m * stride_sm, mask=offs_m < seq_len)
+    q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
+    acc = tl.zeros([BLOCK_M, BLOCK_D_V], dtype=tl.float32)
+    if HAS_MULTIPLE_TARGETS and INVALID_MASK_TYPE == "lower_triangular":
+        low = 0
+        # pyre-ignore[61]
+        uih_end = (seq_len - n_targets + BLOCK_N - 1) // BLOCK_N * BLOCK_N
+        if uih_end < start_m:
+            high = seq_len - n_targets.to(tl.int32)
+        else:
+            high = start_m + BLOCK_M
+    else:
+        if INVALID_MASK_TYPE == "lower_triangular":
+            low = 0
+            high = start_m + BLOCK_M
+        elif INVALID_MASK_TYPE == "upper_triangular":
+            low = start_m // BLOCK_N * BLOCK_N
+            high = seq_len
+            K_block_ptr = tl.advance(K_block_ptr, (0, low))
+            V_block_ptr = tl.advance(V_block_ptr, (low, 0))
 
-            q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
-            acc = tl.zeros([BLOCK_M, BLOCK_D_V], dtype=tl.float32)
-            if HAS_MULTIPLE_TARGETS and INVALID_MASK_TYPE == "lower_triangular":
-                low = 0
-                # pyre-ignore[61]
-                uih_end = (seq_len - n_targets + BLOCK_N - 1) // BLOCK_N * BLOCK_N
-                if uih_end < start_m:
-                    high = seq_len - n_targets.to(tl.int32)
-                else:
-                    high = start_m + BLOCK_M
-            else:
-                if INVALID_MASK_TYPE == "lower_triangular":
-                    low = 0
-                    high = start_m + BLOCK_M
-                elif INVALID_MASK_TYPE == "upper_triangular":
-                    low = start_m // BLOCK_N * BLOCK_N
-                    high = seq_len
-                    K_block_ptr = tl.advance(K_block_ptr, (0, low))
-                    V_block_ptr = tl.advance(V_block_ptr, (low, 0))
-
+    # pyre-ignore[61]
+    for start_n in range(low, high, BLOCK_N):
+        acc += _ragged_hstu_attn_fwd_one_block(
+            start_n=start_n,
+            seq_len=seq_len,
+            offs_m=offs_m,
+            offs_n=offs_n,
+            mask_m=mask_m,
+            q=q,
+            K_block_ptr=K_block_ptr,
+            V_block_ptr=V_block_ptr,
             # pyre-ignore[61]
-            for start_n in range(low, high, BLOCK_N):
-                boundary_check = (start_n > high - BLOCK_N) or (start_n > seq_len - BLOCK_N)
+            n_targets=n_targets if HAS_MULTIPLE_TARGETS else None,
+            ts_1_ptrs=(
+                # pyre-ignore[61]
+                ts_1_ptrs
+                if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS
+                else None
+            ),
+            # pyre-ignore[61]
+            ts_0=ts_0 if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS else None,
+            TW=TW,
+            PW=PW,
+            alpha=alpha,
+            MAX_SEQ_LEN=MAX_SEQ_LEN,
+            num_buckets=num_buckets,
+            max_pos_ind=max_pos_ind,
+            time_bucket_incr=time_bucket_incr,
+            time_bucket_div=time_bucket_div,
+            time_delta=time_delta,
+            # pyre-ignore[61]
+            bias_ptrs=bias_ptrs if ATTN_BIAS_TYPE == "separate" else None,
+            # pyre-ignore[61]
+            attn_scale=attn_scale if HAS_ATTN_SCALE else None,
+            INVALID_MASK_TYPE=INVALID_MASK_TYPE,
+            CAUSAL=CAUSAL,
+            BUCKET_FN=BUCKET_FN,
+            ATTN_BIAS_TYPE=ATTN_BIAS_TYPE,
+            USE_TIME_BIAS=USE_TIME_BIAS,
+            USE_POS_BIAS=USE_POS_BIAS,
+            HAS_MAX_POS_IND=HAS_MAX_POS_IND,
+            HAS_MULTIPLE_TARGETS=HAS_MULTIPLE_TARGETS,
+            HAS_ATTN_SCALE=HAS_ATTN_SCALE,
+            IS_DELTA_Q=IS_DELTA_Q,
+            ALLOW_TF32=ALLOW_TF32,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
+        )
+        K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
+        V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
+
+    if HAS_MULTIPLE_TARGETS and INVALID_MASK_TYPE == "lower_triangular":
+        # pyre-ignore[61]
+        if uih_end < start_m:
+            low_delta = start_m
+            high_delta = start_m + BLOCK_M
+            offset = (low_delta - uih_end).to(tl.int32)  # pyre-ignore [61]
+            K_block_ptr = tl.advance(K_block_ptr, (0, offset))
+            V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
+            for start_delta in range(low_delta, high_delta, BLOCK_N):
                 acc += _ragged_hstu_attn_fwd_one_block(
-                    start_n=start_n,
+                    start_n=start_delta,
                     seq_len=seq_len,
                     offs_m=offs_m,
                     offs_n=offs_n,
@@ -572,8 +582,12 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                         if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS
                         else None
                     ),
-                    # pyre-ignore[61]
-                    ts_0=ts_0 if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS else None,
+                    ts_0=(
+                        # pyre-ignore[61]
+                        ts_0
+                        if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS
+                        else None
+                    ),
                     TW=TW,
                     PW=PW,
                     alpha=alpha,
@@ -600,101 +614,33 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                     ALLOW_TF32=ALLOW_TF32,
                     BLOCK_M=BLOCK_M,
                     BLOCK_N=BLOCK_N,
-                    BOUNDARY_CHECK=boundary_check,
                 )
                 K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
                 V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
 
-            if HAS_MULTIPLE_TARGETS and INVALID_MASK_TYPE == "lower_triangular":
-                # pyre-ignore[61]
-                if uih_end < start_m:
-                    low_delta = start_m
-                    high_delta = start_m + BLOCK_M
-                    if high_delta >= seq_end:
-                        high_delta = seq_end.to(tl.int32)
-                    offset = (low_delta - uih_end).to(tl.int32)  # pyre-ignore [61]
-                    K_block_ptr = tl.advance(K_block_ptr, (0, offset))
-                    V_block_ptr = tl.advance(V_block_ptr, (offset, 0))
-                    for start_delta in range(low_delta, high_delta, BLOCK_N):
-                        boundary_check = (start_delta > seq_len - BLOCK_N) or (start_delta > high_delta - BLOCK_N)
-                        acc += _ragged_hstu_attn_fwd_one_block(
-                            start_n=start_delta,
-                            seq_len=seq_len,
-                            offs_m=offs_m,
-                            offs_n=offs_n,
-                            mask_m=mask_m,
-                            q=q,
-                            K_block_ptr=K_block_ptr,
-                            V_block_ptr=V_block_ptr,
-                            # pyre-ignore[61]
-                            n_targets=n_targets if HAS_MULTIPLE_TARGETS else None,
-                            ts_1_ptrs=(
-                                # pyre-ignore[61]
-                                ts_1_ptrs
-                                if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS
-                                else None
-                            ),
-                            ts_0=(
-                                # pyre-ignore[61]
-                                ts_0
-                                if ATTN_BIAS_TYPE == "fused" and USE_TIME_BIAS
-                                else None
-                            ),
-                            TW=TW,
-                            PW=PW,
-                            alpha=alpha,
-                            MAX_SEQ_LEN=MAX_SEQ_LEN,
-                            num_buckets=num_buckets,
-                            max_pos_ind=max_pos_ind,
-                            time_bucket_incr=time_bucket_incr,
-                            time_bucket_div=time_bucket_div,
-                            time_delta=time_delta,
-                            # pyre-ignore[61]
-                            bias_ptrs=bias_ptrs if ATTN_BIAS_TYPE == "separate" else None,
-                            # pyre-ignore[61]
-                            attn_scale=attn_scale if HAS_ATTN_SCALE else None,
-                            INVALID_MASK_TYPE=INVALID_MASK_TYPE,
-                            CAUSAL=CAUSAL,
-                            BUCKET_FN=BUCKET_FN,
-                            ATTN_BIAS_TYPE=ATTN_BIAS_TYPE,
-                            USE_TIME_BIAS=USE_TIME_BIAS,
-                            USE_POS_BIAS=USE_POS_BIAS,
-                            HAS_MAX_POS_IND=HAS_MAX_POS_IND,
-                            HAS_MULTIPLE_TARGETS=HAS_MULTIPLE_TARGETS,
-                            HAS_ATTN_SCALE=HAS_ATTN_SCALE,
-                            IS_DELTA_Q=IS_DELTA_Q,
-                            ALLOW_TF32=ALLOW_TF32,
-                            BLOCK_M=BLOCK_M,
-                            BLOCK_N=BLOCK_N,
-                            BOUNDARY_CHECK=boundary_check
-                        )
-                        K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
-                        V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
-
-            if IS_DELTA_Q:
-                start_m_delta = tl.program_id(0) * BLOCK_M
-                offs_m_delta = start_m_delta + tl.arange(0, BLOCK_M)
-                offs_v_d = tl.arange(0, BLOCK_D_V)
-                off_o = (
-                    (off_z * DeltaSize + offs_m_delta[:, None]) * stride_om
-                    + off_h * stride_oh
-                    + offs_v_d[None, :]
-                )
-                out_ptrs = Out + off_o
-                tl.store(out_ptrs, acc, mask=(offs_m_delta < DeltaSize)[:, None])
-            else:
-                # rematerialize offsets to save registers
-                start_m = tl.program_id(0) * BLOCK_M
-                offs_m = start_m + tl.arange(0, BLOCK_M)
-                offs_v_d = tl.arange(0, BLOCK_D_V)
-                off_o = (
-                    (seq_start + offs_m[:, None]) * stride_om
-                    + off_h * stride_oh
-                    + offs_v_d[None, :]
-                )
-                out_ptrs = Out + off_o
-                tl.store(out_ptrs, acc, mask=(offs_m < seq_len)[:, None])
-        tile_idx += num_progs
+    if IS_DELTA_Q:
+        start_m_delta = tl.program_id(0) * BLOCK_M
+        offs_m_delta = start_m_delta + tl.arange(0, BLOCK_M)
+        offs_v_d = tl.arange(0, BLOCK_D_V)
+        off_o = (
+            (off_z * DeltaSize + offs_m_delta[:, None]) * stride_om
+            + off_h * stride_oh
+            + offs_v_d[None, :]
+        )
+        out_ptrs = Out + off_o
+        tl.store(out_ptrs, acc, mask=(offs_m_delta < DeltaSize)[:, None])
+    else:
+        # rematerialize offsets to save registers
+        start_m = tl.program_id(0) * BLOCK_M
+        offs_m = start_m + tl.arange(0, BLOCK_M)
+        offs_v_d = tl.arange(0, BLOCK_D_V)
+        off_o = (
+            (seq_start + offs_m[:, None]) * stride_om
+            + off_h * stride_oh
+            + offs_v_d[None, :]
+        )
+        out_ptrs = Out + off_o
+        tl.store(out_ptrs, acc, mask=(offs_m < seq_len)[:, None])
 
 
 class _RaggedAttentionFunction(torch.autograd.Function):
@@ -719,14 +665,15 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         L, H, DimQ = q.shape
         _, _, DimV = v.shape
 
-        # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
-
         out = torch.empty_like(v)
         has_multiple_targets = num_targets is not None
         has_attn_bias = attn_bias is not None
         has_attn_scale = attn_scale is not None
 
-        grid = (608, )
+        grid = lambda meta: (  # noqa E731
+            triton.cdiv(N, meta["BLOCK_M"]),
+            Z * H,
+        )
 
         stride_sz = 0
         stride_sm = 0
@@ -787,16 +734,7 @@ class _RaggedAttentionFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 32, 
-            # BLOCK_N = 32, 
-            # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 0, 
-            # num_stages=1, 
-            # num_warps=8,
         )
-
-        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
-
         return out
 
 
@@ -834,9 +772,10 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
         _, H, DimQ = q.shape
         _, _, DimV = v.shape
         out = torch.empty_like(v)
-        # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
-        grid = (608, )
-
+        grid = lambda meta: (  # noqa E731
+            triton.cdiv(N, meta["BLOCK_M"]),
+            Z * H,
+        )
         stride_sz = 0
         stride_sm = 0
         if attn_scale is not None:
@@ -898,14 +837,5 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 32, 
-            # BLOCK_N = 32, 
-            # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 0, 
-            # num_stages=1, 
-            # num_warps=8,
         )
-
-        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
-
         return out
