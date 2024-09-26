@@ -450,10 +450,11 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     if prog_id < total_tiles % num_progs:
         tiles_per_sm += 1
 
+    delta = 2 * num_progs - 2 * prog_id - 1 
     tile_idx = prog_id
-    for _ in range(0, tiles_per_sm):
-        pid = (total_tiles - tile_idx) // (Z * H)
-        off_hz = (total_tiles - tile_idx) % (Z * H)
+    while tile_idx < num_progs:
+        pid = (total_tiles - tile_idx - 1) // (Z * H)
+        off_hz = (total_tiles - tile_idx - 1) % (Z * H)
         off_z = off_hz // H
         off_h = off_hz % H
 
@@ -689,7 +690,8 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                 )
                 out_ptrs = Out + off_o
                 tl.store(out_ptrs, acc, mask=(offs_m < seq_len)[:, None])
-        tile_idx += num_progs
+        tile_idx += delta
+        delta = 2 * num_progs - delta
 
 
 class _RaggedAttentionFunction(torch.autograd.Function):
