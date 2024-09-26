@@ -28,7 +28,7 @@ import triton.language as tl
 
 try:
     # @manual=//triton:triton
-    from triton.language.extra.cuda.libdevice import fast_dividef
+    from triton.language.extra.libdevice import fast_dividef
 except ImportError:
     # pyre-ignore: Undefined import [21]
     # @manual=//triton:triton
