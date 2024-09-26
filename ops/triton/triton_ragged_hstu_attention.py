@@ -39,26 +39,26 @@ def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
     configs = []
     if torch.version.hip:
         # configs = [
-            # triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 0}, num_stages=1, num_warps=8),]
+        #     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 0}, num_stages=1, num_warps=8),]
 
-        configs = [
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=4),
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
-            # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-False
-            # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-True
+        # configs = [
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=4),
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
+        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-False
+        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-True
 
-            triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=4),
-            triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
-            triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
-        ]
+        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=4),
+        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
+        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
+        # ]
         configs = []
         for BLOCK_M in [32, 64]:
             for BLOCK_N in [32, 64]:
@@ -452,7 +452,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
 
     delta = 2 * num_progs - 2 * prog_id - 1 
     tile_idx = prog_id
-    while tile_idx < num_progs:
+    while tile_idx < total_tiles:
         pid = (total_tiles - tile_idx - 1) // (Z * H)
         off_hz = (total_tiles - tile_idx - 1) % (Z * H)
         off_z = off_hz // H
