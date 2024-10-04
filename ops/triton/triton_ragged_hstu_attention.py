@@ -690,8 +690,9 @@ def _ragged_hstu_attn_fwd(  # noqa C901
                 )
                 out_ptrs = Out + off_o
                 tl.store(out_ptrs, acc, mask=(offs_m < seq_len)[:, None])
-        tile_idx += delta
-        delta = 2 * num_progs - delta
+        # tile_idx += delta
+        # delta = 2 * num_progs - delta
+        tile_idx += num_progs
 
 
 class _RaggedAttentionFunction(torch.autograd.Function):
