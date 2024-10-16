@@ -346,7 +346,7 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
             other=0.0,
         )
         qk = qk + attn_bias
-    silu = fast_dividef(qk, 1.0 + tl.exp(-qk)) * (1.0 / MAX_SEQ_LEN)
+    silu = fast_dividef(qk, 1.0 + tl.exp2(qk * (-1.44269504))) * (1.0 / MAX_SEQ_LEN)
     # masking
     if INVALID_MASK_TYPE == "lower_triangular":
         invalid_mask = offs_m[:, None] >= (start_n + offs_n[None, :])
