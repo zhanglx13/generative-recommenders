@@ -450,7 +450,7 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     if prog_id < total_tiles % num_progs:
         tiles_per_sm += 1
 
-    delta = 2 * num_progs - 2 * prog_id - 1 
+    # delta = 2 * num_progs - 2 * prog_id - 1 
     tile_idx = prog_id
     while tile_idx < total_tiles:
         pid = (total_tiles - tile_idx - 1) // (Z * H)
