@@ -26,6 +26,8 @@ import triton
 # @manual=//triton:triton
 import triton.language as tl
 
+from itertools import product
+
 try:
     # @manual=//triton:triton
     from triton.language.extra.libdevice import fast_dividef
@@ -37,190 +39,31 @@ except ImportError:
 
 def _get_fw_configs() -> List[triton.Config]:  # noqa: C901
     configs = []
-    if torch.version.hip:
-        # configs = [
-        #     triton.Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 0}, num_stages=1, num_warps=8),]
+    configs = [
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'matrix_instr_nonkdim': 32, 'waves_per_eu': 2, 'kpack': 1}, num_stages=1, num_warps=4),]
+    return configs
 
-        # configs = [
-        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=4),
-        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 0}, num_stages=1, num_warps=8),
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-False
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 0}, num_stages=1, num_warps=4), # d64-True
-        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=4),
-        #     # triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 32}, num_stages=1, num_warps=8),
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-False
-        #     # triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 32}, num_stages=1, num_warps=4), # d64-True
-
-        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=4),
-        #     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 128, 'waves_per_eu': 2, 'slice_k_tile': 64}, num_stages=1, num_warps=8),
-        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-False
-        #     triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'slice_k_tile': 64}, num_stages=1, num_warps=4), # d64-True
-        # ]
-        configs = []
-        for BLOCK_M in [32, 64]:
-            for BLOCK_N in [32, 64]:
-                for num_stages in [1]:
-                    for num_warps in [4, 8]:
-                        for matrix_instr_nonkdim in [16, 32]:
-                            for waves_per_eu in [0, 2]:
-                                configs.append(
-                                    triton.Config(
-                                        {
-                                            "BLOCK_M": BLOCK_M,
-                                            "BLOCK_N": BLOCK_N,
-                                            "matrix_instr_nonkdim": matrix_instr_nonkdim,
-                                            "waves_per_eu": waves_per_eu,
-                                        },
-                                        num_stages=num_stages,
-                                        num_warps=num_warps,
-                                    )
-                                )
-    else:
-        configs = [
+    bm_range = [32, 64, 128]
+    bn_range = [32, 64]
+    ns_range = [1, 2]
+    nw_range = [4, 8]
+    mfma_range = [16, 32]
+    eu_range = [0, 2]
+    kp_range = [1, 2]
+    for bm, bn, ns, nw, mfma, eu, kp in product(bm_range, bn_range, ns_range, nw_range, mfma_range, eu_range, kp_range):
+        configs.append(
             triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 64},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 64},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 64},
-                num_stages=4,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 128},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 32, "BLOCK_N": 128},
-                num_stages=2,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 64},
-                num_stages=2,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 64},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 64},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 64, "BLOCK_N": 64},
-                num_stages=4,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=2,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=2,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 32},
-                num_stages=4,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 64},
-                num_stages=2,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 64},
-                num_stages=2,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 64},
-                num_stages=4,
-                num_warps=8,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 128},
-                num_stages=4,
-                num_warps=4,
-            ),
-            triton.Config(
-                {"BLOCK_M": 128, "BLOCK_N": 128},
-                num_stages=2,
-                num_warps=8,
-            ),
-        ]
+                {
+                    "BLOCK_M": bm,
+                    "BLOCK_N": bn,
+                    "matrix_instr_nonkdim": mfma,
+                    "waves_per_eu": eu,
+                    "kpack": kp
+            },
+                num_stages=ns,
+                num_warps=nw,
+            )
+        )
     return configs
 
 
