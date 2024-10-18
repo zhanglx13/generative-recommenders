@@ -82,13 +82,13 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     ts_0,
     TW,
     PW,
-    alpha,
-    MAX_SEQ_LEN,
-    num_buckets,
-    max_pos_ind,
-    time_bucket_incr,
-    time_bucket_div,
-    time_delta,
+    alpha: tl.constexpr,
+    MAX_SEQ_LEN: tl.constexpr,
+    num_buckets: tl.constexpr,
+    max_pos_ind: tl.constexpr,
+    time_bucket_incr: tl.constexpr,
+    time_bucket_div: tl.constexpr,
+    time_delta: tl.constexpr,
     bias_ptrs,
     attn_scale,
     INVALID_MASK_TYPE: tl.constexpr,
@@ -258,29 +258,29 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     num_targets,
     Scale,
     Out,
-    stride_qm,
-    stride_qh,
-    stride_kn,
-    stride_kh,
-    stride_vn,
-    stride_vh,
-    stride_sz,
-    stride_sm,
-    stride_ts,
-    stride_om,
-    stride_oh,
-    alpha,
-    Z,
-    H,
-    MAX_SEQ_LEN,
-    DimQ,
-    DimV,
-    DeltaSize,
-    num_buckets,
-    max_pos_ind,
-    time_bucket_incr,
-    time_bucket_div,
-    time_delta,
+    stride_qm: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_sz: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_ts: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_oh: tl.constexpr,
+    alpha: tl.constexpr,
+    Z: tl.constexpr,
+    H: tl.constexpr,
+    MAX_SEQ_LEN: tl.constexpr,
+    DimQ: tl.constexpr,
+    DimV: tl.constexpr,
+    DeltaSize: tl.constexpr,
+    num_buckets: tl.constexpr,
+    max_pos_ind: tl.constexpr,
+    time_bucket_incr: tl.constexpr,
+    time_bucket_div: tl.constexpr,
+    time_delta: tl.constexpr,
     INVALID_MASK_TYPE: tl.constexpr,
     CAUSAL: tl.constexpr,
     BUCKET_FN: tl.constexpr,
@@ -578,7 +578,21 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         L, H, DimQ = q.shape
         _, _, DimV = v.shape
 
-        # print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
+        if False:
+            print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
+            print(f"{seq_offsets=}")
+            seq_len_cpu = []
+            for i in range(Z):
+                seq_len_cpu.append(seq_offsets[i+1]-seq_offsets[i])
+            print(f"{seq_len_cpu=}")
+            seq1 = seq_offsets[0:Z]
+            seq2 = seq_offsets[1:Z+1]
+            seq3 = seq2 - seq1
+            print(f"{len(seq1)=}  {len(seq2)=}")
+            print(f"{seq3=}")
+            print(f"{num_targets=}")
+            print(f"{q.shape=}")
+
 
         out = torch.empty_like(v)
         has_multiple_targets = num_targets is not None
