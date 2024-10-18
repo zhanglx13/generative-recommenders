@@ -211,7 +211,7 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     if HAS_ATTN_SCALE:
         silu = silu * attn_scale[:, None]
 
-    silu = silu.to(v.dtype)
+    silu = silu.to(v.dtype, "rtz")
     return tl.dot(silu, v, allow_tf32=ALLOW_TF32)
 
 
