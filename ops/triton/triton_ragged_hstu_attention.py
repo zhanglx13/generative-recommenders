@@ -215,6 +215,20 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
     return tl.dot(silu, v, allow_tf32=ALLOW_TF32)
 
 
+@triton.jit
+def chiplet_swizzle(pid, grid_mn, NUM_XCDS: tl.constexpr):
+    # Number of pids per XCD in the new arrangement
+    pids_per_xcd = grid_mn // NUM_XCDS
+
+    # Compute current XCD and local pid within the XCD
+    xcd = pid % NUM_XCDS
+    local_pid = pid // NUM_XCDS
+
+    # Calculate new pid based on the new grouping
+    new_pid = xcd * pids_per_xcd + local_pid
+    return new_pid
+
+
 @triton.autotune(
     configs=_get_fw_configs(),
     key=[
@@ -280,12 +294,16 @@ def _ragged_hstu_attn_fwd(  # noqa C901
     ALLOW_TF32: tl.constexpr,
     BLOCK_D_Q: tl.constexpr,
     BLOCK_D_V: tl.constexpr,
+    GRIDSIZE: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
     n_tile_num = tl.cdiv(MAX_SEQ_LEN, BLOCK_M)
-    prog_id = tl.program_id(0)
-    num_progs = tl.num_programs(0)
+    pid = tl.program_id(0)
+    num_progs = GRIDSIZE;
+
+    NUM_XCDS = 8
+    prog_id = chiplet_swizzle(pid, GRIDSIZE, NUM_XCDS)
 
     total_tiles = n_tile_num * Z * H
 
@@ -628,15 +646,8 @@ class _RaggedAttentionFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 32, 
-            # BLOCK_N = 32, 
-            # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 0, 
-            # num_stages=1, 
-            # num_warps=8,
+            GRIDSIZE=grid[0]
         )
-
-        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
 
         return out
 
@@ -739,14 +750,7 @@ class _RaggedAttentionRelativeBiasFunction(torch.autograd.Function):
             ALLOW_TF32=torch.backends.cuda.matmul.allow_tf32,
             BLOCK_D_Q=DimQ,
             BLOCK_D_V=DimV,
-            # BLOCK_M = 32, 
-            # BLOCK_N = 32, 
-            # matrix_instr_nonkdim = 16,
-            # waves_per_eu = 0, 
-            # num_stages=1, 
-            # num_warps=8,
+            GRIDSIZE=grid[0]
         )
-
-        # print(f"best_config = {_ragged_hstu_attn_fwd.best_config}")
 
         return out
