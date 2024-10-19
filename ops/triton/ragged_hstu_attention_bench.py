@@ -168,6 +168,10 @@ def main(
     timestamps = generate_hstu_timestamps(batch_size, int(lengths.max().item()))
     relative_bias_type = "ALL"
 
+    Z = seq_offsets.numel() - 1
+    for i in range(Z):
+        seq_offsets[i] = i*2048
+
     if not no_relative_bias:
         fn = lambda: _RaggedAttentionRelativeBiasFunction.apply(
             max_seq_len,

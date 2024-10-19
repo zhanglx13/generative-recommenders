@@ -578,12 +578,16 @@ class _RaggedAttentionFunction(torch.autograd.Function):
         L, H, DimQ = q.shape
         _, _, DimV = v.shape
 
+        
         if False:
             print(f"grid: N = {N}, Z = {Z}, H = {H}, DimQ = {DimQ}, DimV = {DimV}")
+            for i in range(Z):
+                seq_offsets[i] = i*2048
             print(f"{seq_offsets=}")
             seq_len_cpu = []
             for i in range(Z):
                 seq_len_cpu.append(seq_offsets[i+1]-seq_offsets[i])
+                seq_offsets[i] = i*2048
             print(f"{seq_len_cpu=}")
             seq1 = seq_offsets[0:Z]
             seq2 = seq_offsets[1:Z+1]
