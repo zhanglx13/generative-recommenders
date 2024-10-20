@@ -217,15 +217,15 @@ def _ragged_hstu_attn_fwd_one_block(  # noqa: C901
 
 @triton.jit
 def chiplet_swizzle(pid, grid_mn, NUM_XCDS: tl.constexpr):
-    # Number of pids per XCD in the new arrangement
-    pids_per_xcd = grid_mn // NUM_XCDS
-
     # Compute current XCD and local pid within the XCD
     xcd = pid % NUM_XCDS
+    rowId = xcd
     local_pid = pid // NUM_XCDS
+    colId = local_pid // 4
+    id_in_col = local_pid % 4
 
     # Calculate new pid based on the new grouping
-    new_pid = xcd * pids_per_xcd + local_pid
+    new_pid = colId * 32 + rowId * 4 + id_in_col
     return new_pid
 
 
