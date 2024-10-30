@@ -229,6 +229,15 @@ def chiplet_swizzle(pid, grid_mn, NUM_XCDS: tl.constexpr):
     return new_pid
 
 
+def _ragged_hstu_attn_fwd_repr(specialization):
+    signature = specialization.signature
+    constants = specialization.constants
+    dtypes = "x".join([f"{signature[i][1:]}" for i in ["Q", "K", "V"]])
+    blocks = "x".join([f"{constants[i]}" for i in ["Z", "H", "MAX_SEQ_LEN", "DimQ", "DimV", "BUCKET_FN", "ATTN_BIAS_TYPE", "DeltaSize"]])
+
+    return f"_triton_hstu_fwd_{dtypes}_{blocks}"
+
+
 @triton.autotune(
     configs=_get_fw_configs(),
     key=[
@@ -243,7 +252,7 @@ def chiplet_swizzle(pid, grid_mn, NUM_XCDS: tl.constexpr):
         "IS_DELTA_Q",
     ],
 )
-@triton.jit
+@triton.jit(repr=_ragged_hstu_attn_fwd_repr)
 def _ragged_hstu_attn_fwd(  # noqa C901
     Q,
     K,

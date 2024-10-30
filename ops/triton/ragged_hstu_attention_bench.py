@@ -123,17 +123,13 @@ def gen_inputs(dtype, attn_dim, batch_size, actual_seq_len, target_size, heads, 
 
 
 @click.command()
-@click.option(
-    "--batch-size",
-    type=int,
-    default=32,
-)
+@click.option("--batch-size", type=int, default=27)
 @click.option("--heads", type=int, default=4)
 @click.option("--attn-dim", type=int, default=128)
 @click.option("--hidden-dim", type=int, default=128)
-@click.option("--max-seq-len", type=int, default=2550)
-@click.option("--actual-seq-len", type=int, default=1616)
-@click.option("--target-size", type=int, default=512)
+@click.option("--max-seq-len", type=int, default=3500)
+@click.option("--actual-seq-len", type=int, default=3500)
+@click.option("--target-size", type=int, default=256)
 @click.option("--max-pos-ind", type=int, default=4086)
 @click.option("--no-relative-bias", is_flag=True, show_default=True, default=False)
 @click.option("--profiling-mode", is_flag=True, show_default=True, default=False)
@@ -172,6 +168,8 @@ def main(
     #for i in range(Z):
     #    seq_offsets[i] = i*2048
     #num_targets = None
+
+    #print(f"{q.shape=}  {k.shape=}  {v.shape=}")
 
     if not no_relative_bias:
         fn = lambda: _RaggedAttentionRelativeBiasFunction.apply(
